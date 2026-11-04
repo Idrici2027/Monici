@@ -1,3 +1,4 @@
+
 import 'dart:convert';
 import 'dart:math';
 
@@ -47,6 +48,7 @@ class _PinScreenState extends State<PinScreen> {
   bool hasPin = false;
   bool confirming = false;
   bool unlocked = false;
+  bool submitting = false;
 
   String firstPin = '';
   String salt = '';
@@ -78,70 +80,99 @@ class _PinScreenState extends State<PinScreen> {
   }
 
   Future<void> submitPin() async {
+    if (submitting) return;
+
     final pin = controller.text;
 
     if (!RegExp(r'^[0-9]{4}$').hasMatch(pin)) {
-      setState(() => message = 'أدخل أربعة أرقام فقط');
+      setState(() {
+        message = 'أدخل أربعة أرقام فقط';
+      });
       return;
     }
 
-    if (!hasPin) {
-      if (!confirming) {
-        firstPin = pin;
-        confirming = true;
-        message = 'أعد كتابة كلمة المرور للتأكيد';
-      } else {
-        if (pin != firstPin) {
-          message = 'كلمتا المرور غير متطابقتين';
-          firstPin = '';
-          confirming = false;
-        } else {
-          final newSalt = List.generate(
-            16,
-            (_) => Random.secure().nextInt(256)
-                .toRadixString(16).padLeft(2, '0'),
-          ).join();
+    setState(() {
+      submitting = true;
+      message = '';
+    });
 
-          await storage.write(
-            key: 'pin_salt',
-            value: newSalt,
-          );
-
-          await storage.write(
-            key: 'pin_hash',
-            value: hashPin(pin, newSalt),
-          );
-
-          if (!mounted) return;
+    try {
+      if (!hasPin) {
+        if (!confirming) {
+          firstPin = pin;
 
           setState(() {
-            salt = newSalt;
-            hasPin = true;
+            confirming = true;
+            message = 'أعد كتابة كلمة المرور للتأكيد';
+          });
+        } else {
+          if (pin != firstPin) {
+            firstPin = '';
+
+            setState(() {
+              confirming = false;
+              message = 'كلمتا المرور غير متطابقتين';
+            });
+          } else {
+            final newSalt = List.generate(
+              16,
+              (_) => Random.secure()
+                  .nextInt(256)
+                  .toRadixString(16)
+                  .padLeft(2, '0'),
+            ).join();
+
+            await storage.write(
+              key: 'pin_salt',
+              value: newSalt,
+            );
+
+            await storage.write(
+              key: 'pin_hash',
+              value: hashPin(pin, newSalt),
+            );
+
+            if (!mounted) return;
+
+            setState(() {
+              salt = newSalt;
+              hasPin = true;
+              unlocked = true;
+              message = '';
+            });
+          }
+        }
+      } else {
+        final savedHash =
+            await storage.read(key: 'pin_hash');
+
+        if (!mounted) return;
+
+        if (savedHash == hashPin(pin, salt)) {
+          setState(() {
             unlocked = true;
             message = '';
           });
+        } else {
+          setState(() {
+            message = 'كلمة المرور غير صحيحة';
+          });
         }
       }
-    } else {
-      final savedHash = await storage.read(key: 'pin_hash');
-
-      if (!mounted) return;
-
-      if (savedHash == hashPin(pin, salt)) {
+    } catch (e) {
+      if (mounted) {
         setState(() {
-          unlocked = true;
-          message = '';
-        });
-      } else {
-        setState(() {
-          message = 'كلمة المرور غير صحيحة';
+          message = 'حدث خطأ، حاول مرة أخرى';
         });
       }
-    }
+    } finally {
+      if (mounted) {
+        controller.clear();
 
-    if (mounted) {
-      controller.clear();
-      setState(() {});
+        setState(() {
+          submitting = false;
+        });
+      }
     }
   }
 
@@ -164,15 +195,17 @@ class _PinScreenState extends State<PinScreen> {
               ),
             ),
             SafeArea(
-              child: Center(
-                child: loading
-                    ? const CircularProgressIndicator(
+              child: loading
+                  ? const Center(
+                      child: CircularProgressIndicator(
                         color: Colors.white,
-                      )
-                    : unlocked
-                        ? welcomeScreen()
-                        : passwordScreen(),
-              ),
+                      ),
+                    )
+                  : unlocked
+                      ? const SizedBox.expand()
+                      : Center(
+                          child: passwordScreen(),
+                        ),
             ),
           ],
         ),
@@ -293,7 +326,8 @@ class _PinScreenState extends State<PinScreen> {
             width: double.infinity,
             height: 55,
             child: ElevatedButton(
-              onPressed: controller.text.length == 4
+              onPressed: controller.text.length == 4 &&
+                      !submitting
                   ? submitPin
                   : null,
               style: ElevatedButton.styleFrom(
@@ -306,11 +340,13 @@ class _PinScreenState extends State<PinScreen> {
                 ),
               ),
               child: Text(
-                hasPin
-                    ? 'دخول'
-                    : confirming
-                        ? 'تأكيد كلمة المرور'
-                        : 'إنشاء كلمة المرور',
+                submitting
+                    ? 'يرجى الانتظار...'
+                    : hasPin
+                        ? 'دخول'
+                        : confirming
+                            ? 'تأكيد كلمة المرور'
+                            : 'إنشاء كلمة المرور',
                 style: const TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.bold,
@@ -326,38 +362,6 @@ class _PinScreenState extends State<PinScreen> {
             style: TextStyle(
               color: Colors.white70,
               fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget welcomeScreen() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.check_circle_rounded,
-            size: 85,
-            color: Colors.white,
-          ),
-          const SizedBox(height: 25),
-          const Text(
-            'مرحباً بك في Monici',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'تم فتح التطبيق بنجاح',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 17,
             ),
           ),
         ],
@@ -394,7 +398,6 @@ class OrangeBackgroundPainter extends CustomPainter {
 
     for (int i = -3; i < 10; i++) {
       final path = Path();
-
       final startX = i * 75.0;
 
       path.moveTo(startX, 0);
@@ -429,7 +432,9 @@ class OrangeBackgroundPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+  bool shouldRepaint(
+    covariant CustomPainter oldDelegate,
+  ) {
     return false;
   }
 }
