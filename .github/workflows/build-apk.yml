@@ -31,6 +31,21 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.6'
+
+      - name: Generate missing Gradle Wrapper
+        shell: bash
+        run: |
+          set -e
+          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
+          gradle -p android wrapper --gradle-version 8.14.6 --distribution-type all
+          chmod +x android/gradlew
+          test -s android/gradle/wrapper/gradle-wrapper.jar
+          test -x android/gradlew
+
       - name: Install dependencies
         run: flutter pub get
 
